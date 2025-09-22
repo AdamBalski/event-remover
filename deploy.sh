@@ -33,7 +33,7 @@ ssh "${REMOTE_USERNAME}@${REMOTE_HOST}" -p "$REMOTE_PORT" bash <<EOF
     server_status=DOWN
     for i in \`seq 20\`; do
         echo "Waiting for /healthz endpoint to report the server is up..."
-        if curl http://localhost:$PORT/healthz | grep UP; then
+        if curl http://localhost:$PORT/healthz | grep OK; then
             server_status=UP
             break
         fi
