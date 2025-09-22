@@ -87,7 +87,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         return 200, UI_HTML
 
     def __healthz(self, url):
-        return "OK"
+        return 200, "OK"
 
     def __is_url_smelly(self, decoded):
         return not decoded.startswith('https://plan.agh.edu.pl')
