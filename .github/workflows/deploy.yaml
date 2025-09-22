@@ -28,6 +28,6 @@ jobs:
           PORT: ${{ secrets.PORT }}
           ORIGIN: ${{ secrets.ORIGIN }}
         run: |
-          chmod +x ./server/ops/deploy.sh
-          ./server/ops/deploy.sh
+          chmod +x ./deploy.sh
+          ./deploy.sh
 
