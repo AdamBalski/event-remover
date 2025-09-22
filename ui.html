@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AGH lectures remover</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 800px;
+      margin: auto;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+    }
+    input[type="url"] {
+      width: 100%;
+      padding: 0.5rem;
+      font-size: 1rem;
+      margin: 0.5rem 0;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button {
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      background: black;
+      color: white;
+      cursor: pointer;
+      margin-right: 0.5rem;
+    }
+    button:hover {
+      background: #444;
+    }
+    .output {
+      margin: 1rem 0 1rem 0;
+      padding: 0.5rem;
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h1>AGH lectures remover (<a href="https://plan.agh.edu.pl/">https://plan.agh.edu.pl/</a> links)</h1>
+
+  <p>
+    Paste your <code>ical</code> link from <a href="https://plan.agh.edu.pl/">plan.agh.edu.pl</a>, and this will give you a new link.
+    That link points to the same calendar but with all <strong>lectures</strong> and <strong>placeholder events</strong> removed.
+  </p>
+
+  <p>
+    An event is filtered out if <em>any</em> of its fields (title, description, etc.) contains either <code>Wykład</code> or <code>Blokada</code>.
+  </p>
+
+  <input type="url" id="icalInput" placeholder="Paste https://plan.agh.edu.pl/ link here" required>
+  <button onclick="transformUrl()">Transform</button>
+
+  <div id="result" class="output" style="display:none;"></div>
+  <button id="copyBtn" style="display:none;" onclick="copyLink()">Copy Link</button>
+
+  <script>
+    function transformUrl() {
+      const input = document.getElementById('icalInput').value.trim();
+      const result = document.getElementById('result');
+      const copyBtn = document.getElementById('copyBtn');
+
+      if (!input.startsWith('https://plan.agh.edu.pl/')) {
+        result.style.display = 'block';
+        result.textContent = 'Invalid input: must start with https://plan.agh.edu.pl/';
+        copyBtn.style.display = 'none';
+        return;
+      }
+
+      const encoded = encodeURIComponent(input);
+      const transformed = `<<ORIGIN>>/transformed?path=${encoded}`;
+
+      result.style.display = 'block';
+      result.innerHTML = `<a href="${transformed}">${transformed}</a>`;
+      copyBtn.style.display = 'inline-block';
+      copyBtn.setAttribute('data-link', transformed);
+    }
+
+    function copyLink() {
+      const copyBtn = document.getElementById('copyBtn');
+      const link = copyBtn.getAttribute('data-link');
+      navigator.clipboard.writeText(link).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => copyBtn.textContent = 'Copy Link', 1500);
+      });
+    }
+  </script>
+</body>
+</html>
