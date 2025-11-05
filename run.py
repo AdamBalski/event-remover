@@ -6,6 +6,7 @@ import urllib
 import threading
 import os
 import logging
+from matching import parse_expression
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -100,14 +101,24 @@ class RequestHandler(BaseHTTPRequestHandler):
         if self.__is_url_smelly(decoded):
             return 400, f"This URL smells funky. We only accept URLs prefixed by 'https://plan.agh.edu.pl', Trace id: {get_trace_id()}"
         
+        # Build predicate based on optional 'q' parameter using matching.py
+        query_expr = qs.get("q", ['NOT "Wykład" AND NOT "Blokada"'])[0]
+        try:
+            expr = parse_expression(query_expr)
+        except Exception as e:
+            logging.exception("Failed to parse query expression")
+            return 400, f"Invalid query expression in 'q': {e}. Trace id: {get_trace_id()}"
+
+        predicate = lambda event: expr.match(event)
+
         try:
             logging.debug(f"Fetching URL: {decoded}. Trace id: {get_trace_id()}")
             with urllib.request.urlopen(decoded) as response:
                 ics = response.read().decode('utf-8')
-                result = filter_events(ics, EVENTS_PREDICATE)
+                result = filter_events(ics, predicate)
                 return 200, result
         except Exception as e:
-            print(e)
+            logging.exception("Processing failed")
             return 500, "Something bad happened"
 
 

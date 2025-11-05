@@ -16,7 +16,7 @@
       font-size: 2.5rem;
       margin-bottom: 1rem;
     }
-    input[type="url"] {
+    input {
       width: 100%;
       padding: 0.5rem;
       font-size: 1rem;
@@ -55,10 +55,16 @@
   </p>
 
   <p>
-    An event is filtered out if <em>any</em> of its fields (title, description, etc.) contains either <code>Wykład</code> or <code>Blokada</code>.
+    Default filter: <code>NOT "Wykład" AND NOT "Blokada"</code> (an event is removed if any field contains those phrases).
+  </p>
+  <p>
+    Optional query supports quoted phrases, parentheses, and operators <code>NOT</code>, <code>AND</code>, <code>OR</code>.
+    Parsing order: <strong>NOT</strong> > <strong>AND</strong> > <strong>OR</strong> (use parentheses to override). Example: exclude labs or exams:
+    <code>NOT ("Lab" OR "Exam")</code>.
   </p>
 
   <input type="url" id="icalInput" placeholder="Paste https://plan.agh.edu.pl/ link here" required>
+  <input type="text" id="queryInput" placeholder="Optional filter, e.g., `NOT &quot;Wykład&quot; AND NOT &quot;Blokada&quot;` (the default)">
   <button onclick="transformUrl()">Transform</button>
 
   <div id="result" class="output" style="display:none;"></div>
@@ -67,6 +73,7 @@
   <script>
     function transformUrl() {
       const input = document.getElementById('icalInput').value.trim();
+      const query = document.getElementById('queryInput').value.trim();
       const result = document.getElementById('result');
       const copyBtn = document.getElementById('copyBtn');
 
@@ -78,7 +85,10 @@
       }
 
       const encoded = encodeURIComponent(input);
-      const transformed = `<<ORIGIN>>/transformed?path=${encoded}`;
+      let transformed = `<<ORIGIN>>/transformed?path=${encoded}`;
+      if (query.length > 0) {
+        transformed += `&q=${encodeURIComponent(query)}`;
+      }
 
       result.style.display = 'block';
       result.innerHTML = `<a href="${transformed}">${transformed}</a>`;
