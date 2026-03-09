@@ -7,7 +7,6 @@ import threading
 import os
 import logging
 import json
-import re
 from datetime import datetime
 from matching import parse_expression
 
@@ -55,8 +54,6 @@ def filter_events(ical_text, predicate):
     result.append("") # adds newline at the end to adhere to RFC5545
     return '\r\n'.join(result)
 
-USOS_DETAIL_PATTERN = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<start>\d{2}:\d{2})\s*:\s*(?P<end>\d{2}:\d{2})\s+(?P<room>.+)")
-
 def parse_usos_imports_param(qs):
     if "usosImports" not in qs:
         return []
@@ -78,26 +75,6 @@ def parse_usos_imports_param(qs):
             events = []
         normalized.append({"details": details, "name": name, "events": events})
     return normalized
-
-def parse_usos_detail_lines(details: str):
-    entries = []
-    lines = [line.strip() for line in details.splitlines() if line.strip()]
-    i = 0
-    while i < len(lines):
-        match = USOS_DETAIL_PATTERN.match(lines[i])
-        if not match or i + 1 >= len(lines):
-            i += 1
-            continue
-        building = lines[i + 1].strip()
-        entries.append({
-            "date": match.group("date"),
-            "start": match.group("start"),
-            "end": match.group("end"),
-            "room": match.group("room").strip(),
-            "building": building
-        })
-        i += 2
-    return entries
 
 def normalize_usos_event_entry(entry):
     if not isinstance(entry, dict):
@@ -161,20 +138,19 @@ def build_usos_events(usos_pairs):
     events = []
     for pair in usos_pairs:
         summary = pair.get("name", "").strip()
-        details = str(pair.get("details", ""))
         if not summary:
             continue
-        normalized_entries = []
         raw_events = pair.get("events")
-        if isinstance(raw_events, list):
-            for raw_entry in raw_events:
-                normalized = normalize_usos_event_entry(raw_entry)
-                if normalized:
-                    normalized_entries.append(normalized)
-        source_entries = normalized_entries or parse_usos_detail_lines(details)
-        if not source_entries:
+        if not isinstance(raw_events, list) or not raw_events:
             continue
-        for entry in source_entries:
+        normalized_entries = []
+        for raw_entry in raw_events:
+            normalized = normalize_usos_event_entry(raw_entry)
+            if normalized:
+                normalized_entries.append(normalized)
+        if not normalized_entries:
+            continue
+        for entry in normalized_entries:
             event_block = build_usos_event(summary, entry)
             if event_block:
                 events.append(event_block)
