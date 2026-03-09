@@ -6,6 +6,9 @@ import urllib
 import threading
 import os
 import logging
+import json
+import re
+from datetime import datetime
 from matching import parse_expression
 
 logging.basicConfig(level=logging.DEBUG)
@@ -51,6 +54,110 @@ def filter_events(ical_text, predicate):
 
     result.append("") # adds newline at the end to adhere to RFC5545
     return '\r\n'.join(result)
+
+USOS_DETAIL_PATTERN = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<start>\d{2}:\d{2})\s*:\s*(?P<end>\d{2}:\d{2})\s+(?P<room>.+)")
+
+def parse_usos_imports_param(qs):
+    if "usosImports" not in qs:
+        return []
+    raw_payload = qs["usosImports"][0]
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid usosImports payload: {exc}")
+    if not isinstance(parsed, list):
+        raise ValueError("Invalid usosImports payload: expected a JSON array")
+    normalized = []
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        details = str(entry.get("details", ""))
+        name = str(entry.get("name", "")).strip()
+        normalized.append({"details": details, "name": name})
+    return normalized
+
+def parse_usos_detail_lines(details: str):
+    entries = []
+    lines = [line.strip() for line in details.splitlines() if line.strip()]
+    i = 0
+    while i < len(lines):
+        match = USOS_DETAIL_PATTERN.match(lines[i])
+        if not match or i + 1 >= len(lines):
+            i += 1
+            continue
+        building = lines[i + 1].strip()
+        entries.append({
+            "date": match.group("date"),
+            "start": match.group("start"),
+            "end": match.group("end"),
+            "room": match.group("room").strip(),
+            "building": building
+        })
+        i += 2
+    return entries
+
+def escape_ical_text(text: str) -> str:
+    safe = text.replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,')
+    safe = safe.replace('\r', '').replace('\n', '\\n')
+    return safe
+
+def to_ical_datetime(date_str: str, time_str: str):
+    try:
+        parsed = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        return parsed.strftime("%Y%m%dT%H%M%S")
+    except ValueError:
+        return None
+
+def build_usos_event(summary: str, entry: dict):
+    start_dt = to_ical_datetime(entry["date"], entry["start"])
+    end_dt = to_ical_datetime(entry["date"], entry["end"])
+    if not start_dt or not end_dt:
+        return None
+    location_parts = [entry.get("building", "").strip(), entry.get("room", "").strip()]
+    location_parts = [part for part in location_parts if part]
+    location = " - ".join(location_parts)
+    description = f"Imported from USOS\\n{entry['date']} {entry['start']} - {entry['end']}"
+    now = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VEVENT",
+        f"UID:{uuid.uuid4()}@event-remover",
+        f"DTSTAMP:{now}",
+        f"DTSTART:{start_dt}",
+        f"DTEND:{end_dt}",
+        f"SUMMARY:{escape_ical_text(summary)}"
+    ]
+    if location:
+        lines.append(f"LOCATION:{escape_ical_text(location)}")
+    lines.append(f"DESCRIPTION:{escape_ical_text(description)}")
+    lines.append("END:VEVENT")
+    return '\r\n'.join(lines) + '\r\n'
+
+def build_usos_events(usos_pairs):
+    events = []
+    for pair in usos_pairs:
+        summary = pair.get("name", "").strip()
+        details = pair.get("details", "")
+        if not summary or not details.strip():
+            continue
+        for entry in parse_usos_detail_lines(details):
+            event_block = build_usos_event(summary, entry)
+            if event_block:
+                events.append(event_block)
+    return events
+
+def append_events_to_ics(ics_text: str, events):
+    if not events:
+        return ics_text
+    joined = ''.join(events)
+    marker = "\r\nEND:VCALENDAR"
+    idx = ics_text.rfind(marker)
+    if idx == -1:
+        return ics_text + joined
+    prefix = ics_text[:idx]
+    suffix = ics_text[idx:]
+    if not prefix.endswith("\r\n"):
+        prefix += "\r\n"
+    return prefix + joined + suffix
 
 def get_from_env_or_fail(var: str) -> str:
     res = os.environ.get(var)
@@ -109,6 +216,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             logging.exception("Failed to parse query expression")
             return 400, f"Invalid query expression in 'q': {e}. Trace id: {get_trace_id()}"
 
+        try:
+            usos_pairs = parse_usos_imports_param(qs)
+        except ValueError as e:
+            logging.exception("Failed to parse usosImports payload")
+            return 400, f"Invalid usosImports payload: {e}. Trace id: {get_trace_id()}"
+
         predicate = lambda event: expr.match(event)
 
         try:
@@ -116,6 +229,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(decoded) as response:
                 ics = response.read().decode('utf-8')
                 result = filter_events(ics, predicate)
+                extra_events = build_usos_events(usos_pairs)
+                result = append_events_to_ics(result, extra_events)
                 return 200, result
         except Exception as e:
             logging.exception("Processing failed")
@@ -157,4 +272,3 @@ def run(server_class=HTTPServer, handler_class=RequestHandler):
 
 if __name__ == '__main__':
     run()
-
