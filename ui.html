@@ -220,7 +220,8 @@
       const result = document.getElementById('result');
       const copyBtn = document.getElementById('copyBtn');
       const usosPairs = collectUsosPairs();
-      const preview = buildUsosPreview(usosPairs);
+      const usosPayloadData = buildUsosPayload(usosPairs);
+      const preview = buildUsosPreview(usosPayloadData);
 
       if (!input.startsWith('https://plan.agh.edu.pl/')) {
         result.style.display = 'block';
@@ -234,8 +235,8 @@
       if (query.length > 0) {
         transformed += `&q=${encodeURIComponent(query)}`;
       }
-      if (usosPairs.length > 0) {
-        const usosPayload = encodeURIComponent(JSON.stringify(usosPairs));
+      if (usosPayloadData.length > 0) {
+        const usosPayload = encodeURIComponent(JSON.stringify(usosPayloadData));
         transformed += `&usosImports=${usosPayload}`;
       }
 
@@ -245,18 +246,25 @@
       copyBtn.setAttribute('data-link', transformed);
     }
 
-    function buildUsosPreview(usosPairs) {
+    function buildUsosPayload(usosPairs) {
+      return usosPairs.map(pair => ({
+        name: (pair.name || '').trim(),
+        details: pair.details,
+        events: parseUsosDetails(pair.details)
+      }));
+    }
+
+    function buildUsosPreview(usosPayloadData) {
+      if (!usosPayloadData.length) {
+        return '';
+      }
+
       const container = document.createElement('div');
       container.style.marginTop = '0.75rem';
       container.innerHTML = '<strong>USOS events preview:</strong>';
 
-      if (usosPairs.length === 0) {
-        container.innerHTML += ' None';
-        return container.outerHTML;
-      }
-
-      usosPairs.forEach(pair => {
-        const parsed = parseUsosDetails(pair.details);
+      usosPayloadData.forEach(pair => {
+        const parsed = Array.isArray(pair.events) ? pair.events : [];
         const block = document.createElement('div');
         block.style.marginTop = '0.5rem';
         block.innerHTML = `<strong>${escapeHtml(pair.name || '(no name)')}</strong>`;

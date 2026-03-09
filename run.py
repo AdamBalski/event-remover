@@ -73,7 +73,10 @@ def parse_usos_imports_param(qs):
             continue
         details = str(entry.get("details", ""))
         name = str(entry.get("name", "")).strip()
-        normalized.append({"details": details, "name": name})
+        events = entry.get("events")
+        if not isinstance(events, list):
+            events = []
+        normalized.append({"details": details, "name": name, "events": events})
     return normalized
 
 def parse_usos_detail_lines(details: str):
@@ -95,6 +98,28 @@ def parse_usos_detail_lines(details: str):
         })
         i += 2
     return entries
+
+def normalize_usos_event_entry(entry):
+    if not isinstance(entry, dict):
+        return None
+
+    def _clean(value):
+        return str(value).strip()
+
+    date = _clean(entry.get("date", ""))
+    start = _clean(entry.get("start", ""))
+    end = _clean(entry.get("end", ""))
+    if not (date and start and end):
+        return None
+    room = _clean(entry.get("room", ""))
+    building = _clean(entry.get("building", ""))
+    return {
+        "date": date,
+        "start": start,
+        "end": end,
+        "room": room,
+        "building": building,
+    }
 
 def escape_ical_text(text: str) -> str:
     safe = text.replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,')
@@ -136,10 +161,20 @@ def build_usos_events(usos_pairs):
     events = []
     for pair in usos_pairs:
         summary = pair.get("name", "").strip()
-        details = pair.get("details", "")
-        if not summary or not details.strip():
+        details = str(pair.get("details", ""))
+        if not summary:
             continue
-        for entry in parse_usos_detail_lines(details):
+        normalized_entries = []
+        raw_events = pair.get("events")
+        if isinstance(raw_events, list):
+            for raw_entry in raw_events:
+                normalized = normalize_usos_event_entry(raw_entry)
+                if normalized:
+                    normalized_entries.append(normalized)
+        source_entries = normalized_entries or parse_usos_detail_lines(details)
+        if not source_entries:
+            continue
+        for entry in source_entries:
             event_block = build_usos_event(summary, entry)
             if event_block:
                 events.append(event_block)
