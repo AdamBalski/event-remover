@@ -18,21 +18,21 @@ jobs:
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Trust deploy host key
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_HOST: ${{ secrets.REMOTE_HOST }}
+          DEPLOY_PORT: ${{ secrets.REMOTE_PORT }}
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p "${DEPLOY_PORT:-22}" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
  
       - name: Deploy with docker-compose
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.REMOTE_HOST }}
+          DEPLOY_PORT: ${{ secrets.REMOTE_PORT }}
+          DEPLOY_USER: ${{ secrets.REMOTE_USERNAME }}
           SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
         run: |
           ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -lc 'set -euo pipefail; SHA=\"${SHA}\"; VERSIONS_FILE=/home/${DEPLOY_USER}/infra/compose/versions/event-remover; echo \"EVENT_REMOVER_VERSION=\$SHA\" >> \"\$VERSIONS_FILE\"; set -a; . \"\$VERSIONS_FILE\"; set +a; docker compose -f /home/${DEPLOY_USER}/infra/compose/event-remover.yml up -d --wait'"
