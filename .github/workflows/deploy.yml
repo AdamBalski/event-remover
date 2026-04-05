@@ -1,9 +1,6 @@
 name: Deploy
 
 on:
-  workflow_run:
-    workflows: ["Build"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +8,6 @@ permissions:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +29,6 @@ jobs:
           DEPLOY_HOST: ${{ secrets.REMOTE_HOST }}
           DEPLOY_PORT: ${{ secrets.REMOTE_PORT }}
           DEPLOY_USER: ${{ secrets.REMOTE_USERNAME }}
-          SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          SHA: ${{ github.sha }}
         run: |
           ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -lc 'set -euo pipefail; SHA=\"${SHA}\"; VERSIONS_FILE=/home/${DEPLOY_USER}/infra/compose/versions/event-remover; echo \"EVENT_REMOVER_VERSION=\$SHA\" >> \"\$VERSIONS_FILE\"; set -a; . \"\$VERSIONS_FILE\"; set +a; docker compose -f /home/${DEPLOY_USER}/infra/compose/event-remover.yml up -d --wait'"
