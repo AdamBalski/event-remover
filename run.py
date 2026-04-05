@@ -1,27 +1,15 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import urllib.request
-import logging
-import uuid
-import urllib
-import threading
-import os
-import logging
 import json
-from datetime import datetime
+import logging
+import os
+import sys
+import threading
+import urllib
+import urllib.request
+import uuid
+from datetime import datetime, timezone
+
 from matching import parse_expression
-
-logging.basicConfig(level=logging.DEBUG)
-
-logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
-rootLogger = logging.getLogger()
-
-fileHandler = logging.FileHandler("./log.log")
-fileHandler.setFormatter(logFormatter)
-rootLogger.addHandler(fileHandler)
-
-consoleHandler = logging.StreamHandler()
-consoleHandler.setFormatter(logFormatter)
-rootLogger.addHandler(consoleHandler)
 
 """
 Takes an iCal event and returns True iff event is not a lecture
@@ -30,6 +18,56 @@ Takes an iCal event and returns True iff event is not a lecture
 """
 EVENTS_PREDICATE = lambda event: "Wykład" not in event\
         and "Blokada" not in event
+
+DEFAULT_FILTER_EXPRESSION = 'NOT "Wykład" AND NOT "Blokada"'
+
+thread_local_storage = threading.local()
+
+def reset_trace_id():
+    thread_local_storage.trace_id = str(uuid.uuid4())
+    return thread_local_storage.trace_id
+
+def get_trace_id():
+    if (value := getattr(thread_local_storage, "trace_id", None)) is not None:
+        return value
+    return reset_trace_id()
+
+def get_trace_id_if_present():
+    return getattr(thread_local_storage, "trace_id", None)
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        payload = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        trace_id = getattr(record, "trace_id", None) or get_trace_id_if_present()
+        if trace_id:
+            payload["trace_id"] = str(trace_id)
+
+        for field in ("method", "path", "status_code", "remote_addr", "port"):
+            value = getattr(record, field, None)
+            if value is not None:
+                payload[field] = value
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload, ensure_ascii=False)
+
+def configure_logging():
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter())
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+configure_logging()
+LOGGER = logging.getLogger("event_remover")
 
 def filter_events(ical_text, predicate):
     """
@@ -176,21 +214,16 @@ def get_from_env_or_fail(var: str) -> str:
         return res
     raise Exception(f"Env variables {var} is required, but was not supplied, failing...")
 
-thread_local_storage = threading.local()
-def reset_trace_id():
-    thread_local_storage.trace_id = uuid.uuid4()
-    return thread_local_storage.trace_id
-def get_trace_id():
-    if (value := getattr(thread_local_storage, "trace_id", None)) is not None:
-        return value
-    return reset_trace_id()
-
 UI_HTML="Error: Not loaded"
 class RequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    def log_message(self, format, *args):
+        _ = format
+        _ = args
+        return
+
     def __send_response(self, status_code, response):
-        print("CORS request received")
         self.send_response(status_code)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-Type', 'text/html')
@@ -220,31 +253,34 @@ class RequestHandler(BaseHTTPRequestHandler):
             return 400, f"This URL smells funky. We only accept URLs prefixed by 'https://plan.agh.edu.pl', Trace id: {get_trace_id()}"
         
         # Build predicate based on optional 'q' parameter using matching.py
-        query_expr = qs.get("q", ['NOT "Wykład" AND NOT "Blokada"'])[0]
+        query_expr = qs.get("q", [DEFAULT_FILTER_EXPRESSION])[0]
         try:
             expr = parse_expression(query_expr)
         except Exception as e:
-            logging.exception("Failed to parse query expression")
+            LOGGER.exception("query.parse_failed")
             return 400, f"Invalid query expression in 'q': {e}. Trace id: {get_trace_id()}"
 
         try:
             usos_pairs = parse_usos_imports_param(qs)
         except ValueError as e:
-            logging.exception("Failed to parse usosImports payload")
+            LOGGER.exception("usos_imports.parse_failed")
             return 400, f"Invalid usosImports payload: {e}. Trace id: {get_trace_id()}"
 
         predicate = lambda event: expr.match(event)
 
         try:
-            logging.debug(f"Fetching URL: {decoded}. Trace id: {get_trace_id()}")
+            LOGGER.info(
+                "ics.fetch_started",
+                extra={"path": decoded},
+            )
             with urllib.request.urlopen(decoded) as response:
                 ics = response.read().decode('utf-8')
                 result = filter_events(ics, predicate)
                 extra_events = build_usos_events(usos_pairs)
                 result = append_events_to_ics(result, extra_events)
                 return 200, result
-        except Exception as e:
-            logging.exception("Processing failed")
+        except Exception:
+            LOGGER.exception("ics.processing_failed")
             return 500, "Something bad happened"
 
 
@@ -257,29 +293,45 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         reset_trace_id()
-        logging.info("GET request,\nPath: %s\nHeaders:\n%s\nTraceId: %s\n", str(self.path), str(self.headers), get_trace_id())
-        response = "GET request for {}".format(self.path).encode('utf-8')
+        LOGGER.info(
+            "request.received",
+            extra={
+                "method": "GET",
+                "path": self.path,
+                "remote_addr": self.client_address[0],
+            },
+        )
         url = urllib.parse.urlparse(self.path)
         handler = self.__resolve_path(url)
         status_code, response = handler(url)
         self.__send_response(status_code, response)
+        LOGGER.info(
+            "request.completed",
+            extra={
+                "method": "GET",
+                "path": self.path,
+                "status_code": status_code,
+                "remote_addr": self.client_address[0],
+            },
+        )
 
 def load_ui():
-    with open("./ui.html", "r") as file:
+    with open("./ui.html", "r", encoding="utf-8") as file:
         global UI_HTML
-        UI_HTML = file.read().replace("<<ORIGIN>>", get_from_env_or_fail("ORIGIN"))
+        UI_HTML = file.read().replace("<<ORIGIN>>", get_from_env_or_fail("BASE_URL"))
 
 def run(server_class=HTTPServer, handler_class=RequestHandler):
-    server_address = ('', int(get_from_env_or_fail("PORT")))
+    port = int(get_from_env_or_fail("PORT"))
+    server_address = ('', port)
     httpd = server_class(server_address, handler_class)
-    logging.info('Server starting...\n')
+    LOGGER.info("server.starting", extra={"port": port})
     try:
         load_ui()
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     httpd.server_close()
-    logging.info('Stopping server...\n')
+    LOGGER.info("server.stopped")
 
 if __name__ == '__main__':
     run()
